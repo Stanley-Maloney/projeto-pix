@@ -1,0 +1,88 @@
+<?php
+
+// Ativar exibição de erros
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+require 'vendor/autoload.php';
+
+use Endroid\QrCode\QrCode;
+use Endroid\QrCode\Writer\PngWriter;
+use Endroid\QrCode\Encoding\Encoding;
+use Endroid\QrCode\ErrorCorrectionLevel;
+
+// Função para gerar o payload PIX
+function gerarPayloadPix($chave, $valor, $nome, $cidade = 'SUA_CIDADE', $txid = null)
+{
+    if (!$txid) {
+        $txid = 'PIX' . uniqid(); // TXID único
+    }
+
+    $valorFormatado = number_format($valor, 2, '.', '');
+
+    $payload = "000201"
+        . "26" . str_pad(strlen("BR.GOV.BCB.PIX"), 2, '0', STR_PAD_LEFT) . "BR.GOV.BCB.PIX"
+        . "01" . str_pad(strlen($chave), 2, '0', STR_PAD_LEFT) . $chave
+        . "52" . "0000"
+        . "53" . "986" // Código da moeda BRL (Real)
+        . "54" . str_pad(strlen($valorFormatado), 2, '0', STR_PAD_LEFT) . $valorFormatado
+        . "58" . str_pad(strlen("BR"), 2, '0', STR_PAD_LEFT) . "BR"
+        . "59" . str_pad(strlen($nome), 2, '0', STR_PAD_LEFT) . $nome
+        . "60" . str_pad(strlen($cidade), 2, '0', STR_PAD_LEFT) . $cidade
+        . "62" . str_pad(strlen("05" . str_pad(strlen($txid), 2, '0', STR_PAD_LEFT) . $txid), 2, '0', STR_PAD_LEFT)
+        . "05" . str_pad(strlen($txid), 2, '0', STR_PAD_LEFT) . $txid
+        . "6304";
+
+    // Adiciona o checksum CRC16
+    $payload .= getCRC16($payload);
+
+    return $payload;
+}
+
+// Função para calcular o CRC16
+function getCRC16($payload)
+{
+    $polinomio = 0x1021;
+    $resultado = 0xFFFF;
+
+    foreach (str_split($payload) as $byte) {
+        $resultado ^= (ord($byte) << 8);
+        for ($bit = 0; $bit < 8; $bit++) {
+            if (($resultado & 0x8000) !== 0) {
+                $resultado = ($resultado << 1) ^ $polinomio;
+            } else {
+                $resultado = $resultado << 1;
+            }
+        }
+    }
+
+    return strtoupper(dechex($resultado & 0xFFFF));
+}
+
+// Verifica se os dados foram enviados via POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['chave'], $_POST['valor'], $_POST['nome'])) {
+        die("Erro: Todos os campos são obrigatórios.");
+    }
+
+    $chave = $_POST['chave'];
+    $valor = $_POST['valor'];
+    $nome = $_POST['nome'];
+
+// Gera o payload PIX
+    $payload = gerarPayloadPix($chave, $valor, $nome);
+
+// Gera o QR Code corretamente
+    $qrCode = QrCode::write($payload)
+        ->setWriter(new PngWriter())
+        ->setSize(300)
+        ->setMargin(10)
+        ->build();
+
+// Exibe o QR Code e o payload
+    header('Content-Type: text/html');
+    echo "<h1>QR Code PIX</h1>";
+    echo "<img src='" . $qrCode->getDataUri() . "' alt='QR Code'><br><br>";
+    echo "<p><strong>Payload:</strong> $payload</p>";
+    echo "<a href='index.php'>Voltar</a>";
+}
